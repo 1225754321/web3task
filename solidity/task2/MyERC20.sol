@@ -159,9 +159,9 @@ contract MyERC20 is IERC20 {
         address to,
         uint256 value
     ) external commonCheck(from, to, value) returns (bool) {
-        if (_allowances[from][to] < value)
-            revert InsufficientRemainder(_allowances[from][to], value);
-        _allowances[from][to] -= value;
+        if (_allowances[from][msg.sender] < value)
+            revert InsufficientRemainder(_allowances[from][msg.sender], value);
+        _allowances[from][msg.sender] -= value;
         _balances[to] += value;
         emit Transfer(from, to, value);
         return true;
