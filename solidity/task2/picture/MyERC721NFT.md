@@ -1,0 +1,3 @@
+合约地址: 0x35171C35B7F49Ab31430d3aBBD0Feb77C64d947B
+合约名称: MyNFT 
+网络: Sepolia
