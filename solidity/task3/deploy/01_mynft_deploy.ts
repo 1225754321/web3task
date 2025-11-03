@@ -1,6 +1,6 @@
 import { ethers, upgrades } from "hardhat";
 import { HardhatRuntimeEnvironment } from "hardhat/types";
-import { writeCfg } from "../utils/config"
+import { writeCfg } from "../utils/utils"
 
 module.exports = async ({
 }: HardhatRuntimeEnvironment) => {
@@ -9,7 +9,7 @@ module.exports = async ({
     const MyNFTFy = await ethers.getContractFactory("MyNFT");
     // 通过代理部署合约
     const myNFTProxy = await upgrades.deployProxy(MyNFTFy, ["TestNFT", "SH_NFT"], {
-        initializer: "initialize",
+        initializer: "__MyNFT_init",
     });
     // 等待部署完成
     await myNFTProxy.waitForDeployment();

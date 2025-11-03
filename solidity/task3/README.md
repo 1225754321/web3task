@@ -11,3 +11,11 @@ REPORT_GAS=true npx hardhat test
 npx hardhat node
 npx hardhat ignition deploy ./ignition/modules/Lock.ts
 ```
+
+.env 结构如下, 值自行补充:
+{
+    INFURA_API_KEY=
+    PRIVATE_KEY=
+    ETH_TO_USD=
+    USDC_TO_USD=
+}

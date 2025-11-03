@@ -1,6 +1,6 @@
 import { ethers, upgrades } from "hardhat";
 import { HardhatRuntimeEnvironment } from "hardhat/types";
-import { readCfg, writeCfg } from "../utils/config"
+import { readCfg, writeCfg } from "../utils/utils"
 
 module.exports = async ({ }: HardhatRuntimeEnvironment) => {
 

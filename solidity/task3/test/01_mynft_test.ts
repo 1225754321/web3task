@@ -1,10 +1,11 @@
 import { deployments, ethers, getNamedAccounts, upgrades } from "hardhat";
 import { Address } from "hardhat-deploy/dist/types";
-import { readCfg } from "../utils/config";
+import { readCfg } from "../utils/utils";
 import { expect } from "chai";
 import { MyNFT, MyNFT_V2 } from "../typechain-types";
 
-describe("MyNFT Upgrade", function () {
+// npx hardhat test test/01_mynft_test.ts 
+describe("MyNFT Upgrade", async function () {
     let deployer: Address, user1: Address;
     let myNFTProxyCfg: any;
     let myNFTProxy: MyNFT;
@@ -50,7 +51,7 @@ describe("MyNFT Upgrade", function () {
     })
 
     it("测试initialize函数只能调用一次", async () => {
-        await expect(myNFTProxy.initialize("", "")).to.be.
+        await expect(myNFTProxy.__MyNFT_init("", "")).to.be.
             revertedWithCustomError(myNFTProxy, "InvalidInitialization()");
     })
 
@@ -74,7 +75,7 @@ describe("MyNFT Upgrade", function () {
         myNFTProxyV2 = await ethers.getContractAt("MyNFT_V2", myNFTProxyCfg.address);
     })
 
-    describe("MyNFT Upgrade V2 Test", function () {
+    describe("MyNFT Upgrade V2 Test", async function () {
         beforeEach(async () => {
             await myNFTProxy.MintNFT(deployer, 0, "url0");
             await deployments.fixture(["mynft_upgrade"]);
