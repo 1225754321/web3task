@@ -18,11 +18,10 @@ module.exports = async ({ }: HardhatRuntimeEnvironment) => {
     );
 
     await writeCfg("NFTAuctionProxy", {
-        abi: NFTAuction_V2Fy.interface.format(true),
-        address: proxyAddress,
+        abi2: NFTAuction_V2Fy.interface.format(true),
+        address2: proxyAddress,
         implementation2: implementationAddress,
-        ...nftAuctionProxyCfg,
-    });
+    }, true);
 };
 
 module.exports.tags = ["nftauction_upgrade"];

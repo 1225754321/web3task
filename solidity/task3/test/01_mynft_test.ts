@@ -2,14 +2,14 @@ import { deployments, ethers, getNamedAccounts, upgrades } from "hardhat";
 import { Address } from "hardhat-deploy/dist/types";
 import { readCfg } from "../utils/utils";
 import { expect } from "chai";
-import { MyNFT, MyNFT_V2 } from "../typechain-types";
+import { MyNFT, MyNftV2 } from "../typechain-types";
 
 // npx hardhat test test/01_mynft_test.ts 
 describe("MyNFT Upgrade", async function () {
     let deployer: Address, user1: Address;
     let myNFTProxyCfg: any;
     let myNFTProxy: MyNFT;
-    let myNFTProxyV2: MyNFT_V2;
+    let myNFTProxyV2: MyNftV2;
 
     beforeEach(async () => {
         ({ deployer, user1 } = await getNamedAccounts());

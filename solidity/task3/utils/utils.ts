@@ -27,8 +27,12 @@ export async function readCfg(cfgName: string, tempId?: string): Promise<any> {
     const storageData = readFileSync(storagePath, "utf-8");
     return JSON.parse(storageData)
 }
-export async function writeCfg(cfgName: string, data: any, tempId?: string) {
+export async function writeCfg(cfgName: string, data: any, notCovered?: boolean, tempId?: string) {
     const storagePath = resolve(persistent, cfgName + ".json");
+    if (existsSync(storagePath) && notCovered) {
+        const old = await readCfg(cfgName, tempId);
+        data = { ...old, ...data }
+    }
     writeFileSync(
         storagePath,
         JSON.stringify(data, null, 2),

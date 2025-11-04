@@ -24,7 +24,7 @@ module.exports = async ({
         address: proxyAddress,
         implementation: implementationAddress,
         args: ["TestNFT", "SH_NFT"],
-    });
+    }, true);
 };
 
 module.exports.tags = ["mynft_deploy"];
