@@ -20,7 +20,8 @@ module.exports = async ({ }: HardhatRuntimeEnvironment) => {
     await writeCfg("NFTAuctionFactoryProxy", {
         abi: NFTAuctionFactoryV2Fy.interface.format(true),
         address: proxyAddress,
-        implementation: implementationAddress,
+        implementation2: implementationAddress,
+        ...nftAuctionFactoryProxyCfg,
     });
 };
 

@@ -2,7 +2,7 @@ import { deployments, ethers, getNamedAccounts, upgrades } from "hardhat";
 import { Address } from "hardhat-deploy/dist/types";
 import { readCfg } from "../utils/utils";
 import { expect } from "chai";
-import { MyNFT, NFTAuction, NFTAuctionFactory, MockUSDC } from "../typechain-types";
+import { MyNFT, NFTAuction, NFTAuctionFactory, MockUSDC, SimpleAuction } from "../typechain-types";
 
 /**    
  * NFT拍卖工厂合约测试
@@ -121,10 +121,7 @@ describe("NFT拍卖工厂合约", async () => {
                     await myNFTProxy.getAddress(),
                     NFT_ID,
                     ethers.parseEther("0.01"),
-                    false,
-                    3600n,
-                    await mockUSDC.getAddress(),
-                    []
+                    3600n
                 )
             ).to.be.revertedWithCustomError(nftAuctionFactoryProxy, "OwnableUnauthorizedAccount");
         });
@@ -231,26 +228,12 @@ describe("NFT拍卖工厂合约", async () => {
         });
 
         it("应该成功创建拍卖合约", async function () {
-            const MockV3AggregatorFy = await ethers.getContractFactory("MockV3Aggregator");
-            const ethAggregator = await MockV3AggregatorFy.deploy(0, 100);
-            const usdcAggregator = await MockV3AggregatorFy.deploy(0, 200);
-            await ethAggregator.waitForDeployment();
-            await usdcAggregator.waitForDeployment();
-
-            const aggregatorAddresses = [
-                await ethAggregator.getAddress(),
-                await usdcAggregator.getAddress()
-            ];
-
             // 创建拍卖
             const tx = await nftAuctionFactoryProxy.createAuction(
                 await myNFTProxy.getAddress(),
                 NFT_ID,
                 STARTING_PRICE,
-                false,
-                DURATION,
-                await mockUSDC.getAddress(),
-                aggregatorAddresses
+                DURATION
             );
             const receipt = await tx.wait();
             
@@ -274,29 +257,22 @@ describe("NFT拍卖工厂合约", async () => {
 
             // 验证拍卖地址有效
             expect(auctionAddress).to.not.equal(ethers.ZeroAddress);
+
+            // 验证创建的拍卖合约可以正常交互
+            const simpleAuction = await ethers.getContractAt("SimpleAuction", auctionAddress);
+            const auctionInfo = await simpleAuction.getAuctionInfo();
+            expect(auctionInfo.seller).to.equal(deployer);
+            expect(auctionInfo.tokenId).to.equal(NFT_ID);
+            expect(auctionInfo.startingPrice).to.equal(STARTING_PRICE);
         });
 
         it("应该成功创建多个拍卖合约", async function () {
-            const MockV3AggregatorFy = await ethers.getContractFactory("MockV3Aggregator");
-            const ethAggregator = await MockV3AggregatorFy.deploy(0, 100);
-            const usdcAggregator = await MockV3AggregatorFy.deploy(0, 200);
-            await ethAggregator.waitForDeployment();
-            await usdcAggregator.waitForDeployment();
-
-            const aggregatorAddresses = [
-                await ethAggregator.getAddress(),
-                await usdcAggregator.getAddress()
-            ];
-
             // 创建第一个拍卖
             const tx1 = await nftAuctionFactoryProxy.createAuction(
                 await myNFTProxy.getAddress(),
                 NFT_ID,
                 STARTING_PRICE,
-                false,
-                DURATION,
-                await mockUSDC.getAddress(),
-                aggregatorAddresses
+                DURATION
             );
             const receipt1 = await tx1.wait();
             const event1 = receipt1?.logs.find((log: any) => log.fragment?.name === "AuctionCreated");
@@ -311,10 +287,7 @@ describe("NFT拍卖工厂合约", async () => {
                 await myNFTProxy.getAddress(),
                 NEW_NFT_ID,
                 STARTING_PRICE,
-                true,
-                DURATION,
-                await mockUSDC.getAddress(),
-                aggregatorAddresses
+                DURATION
             );
             const receipt2 = await tx2.wait();
             const event2 = receipt2?.logs.find((log: any) => log.fragment?.name === "AuctionCreated");
@@ -330,43 +303,36 @@ describe("NFT拍卖工厂合约", async () => {
 
             // 验证拍卖计数器
             expect(await nftAuctionFactoryProxy.nextAuctionId()).to.equal(2n);
+
+            // 验证两个拍卖合约都可以正常交互
+            const simpleAuction1 = await ethers.getContractAt("SimpleAuction", auctionAddress1);
+            const simpleAuction2 = await ethers.getContractAt("SimpleAuction", auctionAddress2);
+            
+            const auctionInfo1 = await simpleAuction1.getAuctionInfo();
+            const auctionInfo2 = await simpleAuction2.getAuctionInfo();
+            
+            expect(auctionInfo1.tokenId).to.equal(NFT_ID);
+            expect(auctionInfo2.tokenId).to.equal(NEW_NFT_ID);
         });
 
         it("非所有者创建拍卖应失败", async function () {
-            const MockV3AggregatorFy = await ethers.getContractFactory("MockV3Aggregator");
-            const ethAggregator = await MockV3AggregatorFy.deploy(0, 100);
-            const usdcAggregator = await MockV3AggregatorFy.deploy(0, 200);
-            await ethAggregator.waitForDeployment();
-            await usdcAggregator.waitForDeployment();
-
-            const aggregatorAddresses = [
-                await ethAggregator.getAddress(),
-                await usdcAggregator.getAddress()
-            ];
-
             await expect(
                 nftAuctionFactoryProxy.connect(await ethers.getSigner(user1)).createAuction(
                     await myNFTProxy.getAddress(),
                     NFT_ID,
                     STARTING_PRICE,
-                    false,
-                    DURATION,
-                    await mockUSDC.getAddress(),
-                    aggregatorAddresses
+                    DURATION
                 )
             ).to.be.revertedWithCustomError(nftAuctionFactoryProxy, "OwnableUnauthorizedAccount");
         });
 
-        it("应该正确处理空的预言机地址数组", async function () {
-            // 创建拍卖时不设置预言机地址
+        it("应该正确处理拍卖合约交互", async function () {
+            // 创建拍卖
             const tx = await nftAuctionFactoryProxy.createAuction(
                 await myNFTProxy.getAddress(),
                 NFT_ID,
                 STARTING_PRICE,
-                false,
-                DURATION,
-                await mockUSDC.getAddress(),
-                []
+                DURATION
             );
             const receipt = await tx.wait();
             const event = receipt?.logs.find((log: any) => log.fragment?.name === "AuctionCreated");
@@ -378,6 +344,20 @@ describe("NFT拍卖工厂合约", async () => {
             // 验证拍卖列表更新
             const auctions = await nftAuctionFactoryProxy.getAuctions();
             expect(auctions.length).to.equal(1);
+
+            // 验证拍卖合约功能
+            const simpleAuction = await ethers.getContractAt("SimpleAuction", auctionAddress);
+            
+            // 验证拍卖信息
+            const auctionInfo = await simpleAuction.getAuctionInfo();
+            expect(auctionInfo.seller).to.equal(deployer);
+            expect(auctionInfo.nftContract).to.equal(await myNFTProxy.getAddress());
+            expect(auctionInfo.tokenId).to.equal(NFT_ID);
+            expect(auctionInfo.startingPrice).to.equal(STARTING_PRICE);
+            expect(auctionInfo.status).to.equal(0); // Active status
+
+            // 验证拍卖活跃状态
+            expect(await simpleAuction.isActive()).to.be.true;
         });
     });
 
@@ -391,6 +371,222 @@ describe("NFT拍卖工厂合约", async () => {
             expect(myNFTAddress).to.not.equal(ethers.ZeroAddress);
             expect(mockUSDCAddress).to.not.equal(ethers.ZeroAddress);
             expect(factoryAddress).to.not.equal(ethers.ZeroAddress);
+        });
+    });
+
+    describe("完整拍卖流程测试", function () {
+        let auctionAddress: string;
+        let simpleAuction: SimpleAuction;
+        const STARTING_PRICE = ethers.parseEther("0.01");
+        const DURATION = 3600n * 2n;
+
+        beforeEach(async () => {
+            // 确保NFT已经授权给工厂合约
+            await myNFTProxy.approve(await nftAuctionFactoryProxy.getAddress(), NFT_ID);
+            
+            // 创建拍卖
+            const tx = await nftAuctionFactoryProxy.createAuction(
+                await myNFTProxy.getAddress(),
+                NFT_ID,
+                STARTING_PRICE,
+                DURATION
+            );
+            const receipt = await tx.wait();
+            const event = receipt?.logs.find((log: any) => log.fragment?.name === "AuctionCreated");
+            auctionAddress = (event as any)?.args[0];
+            simpleAuction = await ethers.getContractAt("SimpleAuction", auctionAddress);
+        });
+
+        it("应该成功完成完整拍卖流程 - 有出价者获胜", async function () {
+            // 验证拍卖初始状态
+            const initialInfo = await simpleAuction.getAuctionInfo();
+            expect(initialInfo.seller).to.equal(deployer);
+            expect(initialInfo.status).to.equal(0); // Active
+            expect(await simpleAuction.isActive()).to.be.true;
+
+            // user1 出价
+            const user1Signer = await ethers.getSigner(user1);
+            const bidAmount1 = ethers.parseEther("0.02");
+            await expect(
+                simpleAuction.connect(user1Signer).placeBid({ value: bidAmount1 })
+            ).to.emit(simpleAuction, "BidPlaced").withArgs(user1, bidAmount1);
+
+            // 验证出价后状态
+            const afterBid1Info = await simpleAuction.getAuctionInfo();
+            expect(afterBid1Info.highestBidder).to.equal(user1);
+            expect(afterBid1Info.highestBid).to.equal(bidAmount1);
+
+            // user2 出更高价
+            const user2Signer = await ethers.getSigner(user2);
+            const bidAmount2 = ethers.parseEther("0.03");
+            await expect(
+                simpleAuction.connect(user2Signer).placeBid({ value: bidAmount2 })
+            ).to.emit(simpleAuction, "BidPlaced").withArgs(user2, bidAmount2);
+
+            // 验证user1收到退款
+            const user1BalanceBefore = await ethers.provider.getBalance(user1);
+            await expect(
+                simpleAuction.connect(user2Signer).placeBid({ value: bidAmount2 })
+            );
+            const user1BalanceAfter = await ethers.provider.getBalance(user1);
+            // 由于gas费用，余额可能不会严格增加，但应该接近原始余额
+            expect(user1BalanceAfter).to.be.closeTo(user1BalanceBefore, ethers.parseEther("0.001"));
+
+            // 验证出价后状态
+            const afterBid2Info = await simpleAuction.getAuctionInfo();
+            expect(afterBid2Info.highestBidder).to.equal(user2);
+            expect(afterBid2Info.highestBid).to.equal(bidAmount2);
+
+            // 等待拍卖结束
+            await ethers.provider.send("evm_increaseTime", [Number(DURATION) + 1]);
+            await ethers.provider.send("evm_mine", []);
+
+            // 卖家结束拍卖
+            await expect(simpleAuction.endAuction())
+                .to.emit(simpleAuction, "AuctionEnded")
+                .withArgs(user2, bidAmount2);
+
+            // 验证拍卖结束状态
+            const finalInfo = await simpleAuction.getAuctionInfo();
+            expect(finalInfo.status).to.equal(1); // Ended
+            expect(await simpleAuction.isActive()).to.be.false;
+
+            // 验证NFT转移到获胜者
+            expect(await myNFTProxy.ownerOf(NFT_ID)).to.equal(user2);
+
+            // 验证卖家收到资金
+            const sellerBalance = await ethers.provider.getBalance(deployer);
+            expect(sellerBalance).to.be.gt(0);
+        });
+
+        it("应该成功完成完整拍卖流程 - 无人出价", async function () {
+            // 等待拍卖结束
+            await ethers.provider.send("evm_increaseTime", [Number(DURATION) + 1]);
+            await ethers.provider.send("evm_mine", []);
+
+            // 卖家结束拍卖
+            await expect(simpleAuction.endAuction())
+                .to.emit(simpleAuction, "AuctionEnded")
+                .withArgs(ethers.ZeroAddress, STARTING_PRICE);
+
+            // 验证拍卖结束状态
+            const finalInfo = await simpleAuction.getAuctionInfo();
+            expect(finalInfo.status).to.equal(1); // Ended
+            expect(await simpleAuction.isActive()).to.be.false;
+
+            // 验证NFT退还卖家
+            expect(await myNFTProxy.ownerOf(NFT_ID)).to.equal(deployer);
+        });
+
+        it("应该成功取消拍卖", async function () {
+            // user1 出价
+            const user1Signer = await ethers.getSigner(user1);
+            const bidAmount = ethers.parseEther("0.02");
+            await simpleAuction.connect(user1Signer).placeBid({ value: bidAmount });
+
+            // 卖家取消拍卖
+            await expect(simpleAuction.cancelAuction())
+                .to.emit(simpleAuction, "AuctionCancelled")
+                .withArgs(deployer);
+
+            // 验证拍卖取消状态
+            const finalInfo = await simpleAuction.getAuctionInfo();
+            expect(finalInfo.status).to.equal(2); // Cancelled
+            expect(await simpleAuction.isActive()).to.be.false;
+
+            // 验证NFT退还卖家
+            expect(await myNFTProxy.ownerOf(NFT_ID)).to.equal(deployer);
+
+            // 验证出价者收到退款
+            const user1Balance = await ethers.provider.getBalance(user1);
+            expect(user1Balance).to.be.gt(0);
+        });
+
+        it("非卖家不能结束拍卖", async function () {
+            const user1Signer = await ethers.getSigner(user1);
+            await expect(
+                simpleAuction.connect(user1Signer).endAuction()
+            ).to.be.revertedWith("Only seller can end auction");
+        });
+
+        it("非卖家不能取消拍卖", async function () {
+            const user1Signer = await ethers.getSigner(user1);
+            await expect(
+                simpleAuction.connect(user1Signer).cancelAuction()
+            ).to.be.revertedWith("Only seller can cancel auction");
+        });
+
+        it("拍卖未结束不能结束", async function () {
+            await expect(
+                simpleAuction.endAuction()
+            ).to.be.revertedWith("Auction not ended");
+        });
+
+        it("拍卖已结束不能取消", async function () {
+            // 等待拍卖结束
+            await ethers.provider.send("evm_increaseTime", [Number(DURATION) + 1]);
+            await ethers.provider.send("evm_mine", []);
+
+            // 结束拍卖
+            await simpleAuction.endAuction();
+
+            // 尝试取消已结束的拍卖
+            await expect(
+                simpleAuction.cancelAuction()
+            ).to.be.revertedWith("Auction not active");
+        });
+
+        it("出价必须高于当前最高价", async function () {
+            const user1Signer = await ethers.getSigner(user1);
+            const lowBidAmount = ethers.parseEther("0.005"); // 低于起始价格
+            await expect(
+                simpleAuction.connect(user1Signer).placeBid({ value: lowBidAmount })
+            ).to.be.revertedWith("Bid too low");
+        });
+
+        it("拍卖结束后不能出价", async function () {
+            // 等待拍卖结束
+            await ethers.provider.send("evm_increaseTime", [Number(DURATION) + 1]);
+            await ethers.provider.send("evm_mine", []);
+
+            const user1Signer = await ethers.getSigner(user1);
+            const bidAmount = ethers.parseEther("0.02");
+            await expect(
+                simpleAuction.connect(user1Signer).placeBid({ value: bidAmount })
+            ).to.be.revertedWith("Auction ended");
+        });
+
+        it("拍卖取消后不能出价", async function () {
+            // 取消拍卖
+            await simpleAuction.cancelAuction();
+
+            const user1Signer = await ethers.getSigner(user1);
+            const bidAmount = ethers.parseEther("0.02");
+            await expect(
+                simpleAuction.connect(user1Signer).placeBid({ value: bidAmount })
+            ).to.be.revertedWith("Auction not active");
+        });
+
+        it("应该正确处理多个出价者的退款", async function () {
+            // user1 出价
+            const user1Signer = await ethers.getSigner(user1);
+            const bidAmount1 = ethers.parseEther("0.02");
+            await simpleAuction.connect(user1Signer).placeBid({ value: bidAmount1 });
+
+            // user2 出更高价
+            const user2Signer = await ethers.getSigner(user2);
+            const bidAmount2 = ethers.parseEther("0.03");
+            await simpleAuction.connect(user2Signer).placeBid({ value: bidAmount2 });
+
+            // user3 出最高价
+            const user3Signer = await ethers.getSigner(user1); // 使用另一个账户
+            const bidAmount3 = ethers.parseEther("0.04");
+            await simpleAuction.connect(user3Signer).placeBid({ value: bidAmount3 });
+
+            // 验证最终状态
+            const finalInfo = await simpleAuction.getAuctionInfo();
+            expect(finalInfo.highestBidder).to.equal(user1); // user3 实际上是 user1 的另一个签名者
+            expect(finalInfo.highestBid).to.equal(bidAmount3);
         });
     });
 });

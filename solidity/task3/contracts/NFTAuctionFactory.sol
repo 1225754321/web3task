@@ -4,7 +4,8 @@ pragma solidity ^0.8.0;
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import {NFTAuction, IERC721, ConvertPrice} from "./NFTAuction.sol";
+import {IERC721} from "@openzeppelin/contracts/interfaces/IERC721.sol";
+import {SimpleAuction} from "./SimpleAuction.sol";
 
 /// @title NFT 拍卖工厂合约
 /// @notice 用于创建和管理多个 NFT 拍卖合约
@@ -13,10 +14,10 @@ import {NFTAuction, IERC721, ConvertPrice} from "./NFTAuction.sol";
 contract NFTAuctionFactory is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice 所有创建的拍卖合约地址数组
     address[] public auctions;
-    
+
     /// @notice 拍卖ID到拍卖合约地址的映射
     mapping(uint256 => address) public auctionIdToAuction;
-    
+
     /// @notice 下一个拍卖ID
     uint256 public nextAuctionId;
 
@@ -32,36 +33,36 @@ contract NFTAuctionFactory is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     }
 
     /// @notice 创建新的 NFT 拍卖合约
-    /// @dev 部署新的 NFTAuction 合约并设置预言机
+    /// @dev 部署新的 SimpleAuction 合约，并转移NFT到拍卖合约
     /// @param _nftContract NFT 合约地址
     /// @param _tokenId NFT token ID
     /// @param _startingPrice 起始价格
-    /// @param _isUSDCPrice 是否使用 USDC 定价
     /// @param _duration 拍卖持续时间
-    /// @param _usdcTokenAddress USDC 代币地址
-    /// @param _aggregatorV3Interface Chainlink 预言机地址数组
     /// @return 新创建的拍卖合约地址
     function createAuction(
         IERC721 _nftContract,
         uint256 _tokenId,
         uint256 _startingPrice,
-        bool _isUSDCPrice,
-        uint256 _duration,
-        address _usdcTokenAddress,
-        address[] memory _aggregatorV3Interface
+        uint256 _duration
     ) external onlyOwner nonReentrant returns (address) {
-        // 由于 NFTAuction 是可升级合约，我们无法直接使用 new 部署
-        // 这里我们改为返回一个模拟地址，实际部署应该在部署脚本中完成
-        address auctionAddress = address(uint160(uint256(keccak256(abi.encodePacked(
-            block.timestamp,
-            block.prevrandao,
-            nextAuctionId
-        )))));
-        
+        // 先部署拍卖合约
+        SimpleAuction auction = new SimpleAuction(
+            _msgSender(),
+            _nftContract,
+            _tokenId,
+            _startingPrice,
+            _duration
+        );
+
+        address auctionAddress = address(auction);
+
+        // 转移NFT到拍卖合约
+        _nftContract.transferFrom(msg.sender, auctionAddress, _tokenId);
+
         auctions.push(auctionAddress);
         auctionIdToAuction[nextAuctionId] = auctionAddress;
         nextAuctionId++;
-        
+
         emit AuctionCreated(auctionAddress);
         return auctionAddress;
     }
