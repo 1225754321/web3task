@@ -72,14 +72,14 @@ describe("MyNFT Upgrade", async function () {
         expect(implAfter).to.be.a("string").and.not.empty;
         expect(implAfter).to.not.equal(implBefore);
 
-        myNFTProxyV2 = await ethers.getContractAt("MyNFT_V2", myNFTProxyCfg.address);
+        myNFTProxyV2 = await ethers.getContractAt("MyNftV2", myNFTProxyCfg.address);
     })
 
     describe("MyNFT Upgrade V2 Test", async function () {
         beforeEach(async () => {
             await myNFTProxy.MintNFT(deployer, 0, "url0");
             await deployments.fixture(["mynft_upgrade"]);
-            myNFTProxyV2 = await ethers.getContractAt("MyNFT_V2", myNFTProxyCfg.address);
+            myNFTProxyV2 = await ethers.getContractAt("MyNftV2", myNFTProxyCfg.address);
         })
         it("测试升级后数据保持正确", async () => {
             expect(await myNFTProxyV2.balanceOf(deployer)).to.equal(1);

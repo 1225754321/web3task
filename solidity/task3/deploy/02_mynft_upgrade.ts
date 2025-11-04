@@ -7,9 +7,9 @@ module.exports = async ({ }: HardhatRuntimeEnvironment) => {
     const myNFTProxyCfg = await readCfg("MyNFTProxy");
 
     // 获取合约工厂
-    const MyNFT_V2Fy = await ethers.getContractFactory("MyNFT_V2");
+    const MyNftV2Fy = await ethers.getContractFactory("MyNftV2");
     // 升级代理合约
-    const myNFTProxy = await upgrades.upgradeProxy(myNFTProxyCfg.address, MyNFT_V2Fy);
+    const myNFTProxy = await upgrades.upgradeProxy(myNFTProxyCfg.address, MyNftV2Fy);
     await myNFTProxy.waitForDeployment();
 
     const proxyAddress = await myNFTProxy.getAddress();
@@ -18,7 +18,7 @@ module.exports = async ({ }: HardhatRuntimeEnvironment) => {
     );
 
     await writeCfg("MyNFTProxy", {
-        abi: MyNFT_V2Fy.interface.format(true),
+        abi: MyNftV2Fy.interface.format(true),
         address: proxyAddress,
         implementation: implementationAddress,
     });
