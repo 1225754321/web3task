@@ -66,6 +66,13 @@ contract NFTAuction is
     /// @param token 不支持的代币地址
     error UnsupportedBidToken(address token);
 
+    /// @notice 手续费比例无效错误
+    /// @param feeRate 无效的手续费比例
+    error InvalidFeeRate(uint256 feeRate);
+
+    /// @notice 无手续费可提取错误
+    error NoFeesToWithdraw();
+
     using SafeERC20 for IERC20;
 
     /// @notice 最小拍卖时长（1小时）
@@ -73,6 +80,21 @@ contract NFTAuction is
     
     /// @notice 最大拍卖时长（7天）
     uint256 public constant MAX_AUCTION_DURATION = 7 days;
+
+    /// @notice 默认手续费比例（2.5%，使用 10000 作为基数）
+    uint256 public constant DEFAULT_FEE_RATE = 250; // 2.5%
+
+    /// @notice 手续费比例基数（10000 = 100%）
+    uint256 public constant FEE_RATE_BASE = 10000;
+
+    /// @notice 当前手续费比例
+    uint256 public feeRate;
+
+    /// @notice 累计手续费总额（ETH）
+    uint256 public totalFeesETH;
+
+    /// @notice 累计手续费总额（USDC）
+    uint256 public totalFeesUSDC;
 
     /// @notice 拍卖创建事件
     /// @param auctionId 创建的拍卖ID
@@ -108,6 +130,33 @@ contract NFTAuction is
     /// @param auctionId 拍卖ID
     /// @param seller 卖家地址
     event AuctionCancelled(uint256 indexed auctionId, address indexed seller);
+
+    /// @notice 手续费收取事件
+    /// @param auctionId 拍卖ID
+    /// @param feeAmount 手续费金额
+    /// @param feeToken 手续费代币地址
+    /// @param seller 卖家地址
+    event FeeCollected(
+        uint256 indexed auctionId,
+        uint256 feeAmount,
+        address feeToken,
+        address indexed seller
+    );
+
+    /// @notice 手续费提取事件
+    /// @param recipient 接收者地址
+    /// @param ethAmount 提取的ETH金额
+    /// @param usdcAmount 提取的USDC金额
+    event FeesWithdrawn(
+        address indexed recipient,
+        uint256 ethAmount,
+        uint256 usdcAmount
+    );
+
+    /// @notice 手续费比例更新事件
+    /// @param oldFeeRate 旧的手续费比例
+    /// @param newFeeRate 新的手续费比例
+    event FeeRateUpdated(uint256 oldFeeRate, uint256 newFeeRate);
 
     /// @notice 拍卖结构体
     /// @dev 存储拍卖相关信息，优化存储布局
@@ -298,7 +347,7 @@ contract NFTAuction is
     }
 
     /// @notice 结束拍卖
-    /// @dev 将 NFT 转移给最高出价者，将资金转移给卖家
+    /// @dev 将 NFT 转移给最高出价者，将资金转移给卖家（扣除手续费）
     /// @param _auctionID 拍卖 ID
     function endAuction(uint256 _auctionID) external nonReentrant {
         Auction storage auction = auctions[_auctionID];
@@ -318,17 +367,28 @@ contract NFTAuction is
                 auction.highestBidder,
                 auction.tokenId
             );
-            // 转给卖家
+            
+            // 计算手续费
+            uint256 auctionFinalPrice = auction.highestBid;
+            uint256 feeAmount = calculateFee(auctionFinalPrice);
+            uint256 sellerAmount = auctionFinalPrice - feeAmount;
+
+            // 转给卖家（扣除手续费）
             bool success;
             if (address(auction.bidToken) == address(0)) {
-                (success, ) = auction.seller.call{value: auction.highestBid}(
-                    ""
-                );
+                // ETH 交易
+                (success, ) = auction.seller.call{value: sellerAmount}("");
+                if (success && feeAmount > 0) {
+                    totalFeesETH += feeAmount;
+                    emit FeeCollected(_auctionID, feeAmount, address(0), auction.seller);
+                }
             } else {
-                success = auction.bidToken.trySafeTransfer(
-                    auction.seller,
-                    auction.highestBid
-                );
+                // USDC 交易
+                success = auction.bidToken.trySafeTransfer(auction.seller, sellerAmount);
+                if (success && feeAmount > 0) {
+                    totalFeesUSDC += feeAmount;
+                    emit FeeCollected(_auctionID, feeAmount, address(auction.bidToken), auction.seller);
+                }
             }
             if (!success) {
                 revert TransferFailed();
@@ -414,6 +474,7 @@ contract NFTAuction is
         __ConvertPrice_init();
         __UUPSUpgradeable_init();
         setUsdcTokenAddress(_usdcTokenAddress);
+        feeRate = DEFAULT_FEE_RATE;
     }
 
     /// @notice 设置 USDC 代币地址
@@ -421,6 +482,60 @@ contract NFTAuction is
     /// @param _usdcTokenAddress USDC 代币地址
     function setUsdcTokenAddress(address _usdcTokenAddress) public onlyOwner {
         usdcTokenAddress = _usdcTokenAddress;
+    }
+
+    /// @notice 设置手续费比例
+    /// @dev 只有合约所有者可以调用此函数，手续费比例不能超过 10%
+    /// @param _feeRate 新的手续费比例（基于 FEE_RATE_BASE）
+    function setFeeRate(uint256 _feeRate) external onlyOwner {
+        if (_feeRate > FEE_RATE_BASE / 10) {
+            revert InvalidFeeRate(_feeRate);
+        }
+        uint256 oldFeeRate = feeRate;
+        feeRate = _feeRate;
+        emit FeeRateUpdated(oldFeeRate, _feeRate);
+    }
+
+    /// @notice 计算手续费金额
+    /// @dev 根据最终价格和手续费比例计算手续费
+    /// @param finalPrice 最终价格
+    /// @return 手续费金额
+    function calculateFee(uint256 finalPrice) public view returns (uint256) {
+        return (finalPrice * feeRate) / FEE_RATE_BASE;
+    }
+
+    /// @notice 提取累计的手续费
+    /// @dev 只有合约所有者可以调用此函数
+    function withdrawFees() external onlyOwner nonReentrant {
+        uint256 ethFees = totalFeesETH;
+        uint256 usdcFees = totalFeesUSDC;
+
+        if (ethFees == 0 && usdcFees == 0) {
+            revert NoFeesToWithdraw();
+        }
+
+        // 重置累计手续费
+        totalFeesETH = 0;
+        totalFeesUSDC = 0;
+
+        // 提取 ETH 手续费
+        if (ethFees > 0) {
+            (bool success, ) = payable(owner()).call{value: ethFees}("");
+            if (!success) {
+                revert TransferFailed();
+            }
+        }
+
+        // 提取 USDC 手续费
+        if (usdcFees > 0) {
+            IERC20 usdc = IERC20(usdcTokenAddress);
+            bool success = usdc.trySafeTransfer(owner(), usdcFees);
+            if (!success) {
+                revert TransferFailed();
+            }
+        }
+
+        emit FeesWithdrawn(owner(), ethFees, usdcFees);
     }
 
     /// @notice 授权合约升级

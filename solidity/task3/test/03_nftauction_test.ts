@@ -439,14 +439,17 @@ describe("NFT拍卖合约", async () => {
                 // 验证 NFT 转移给最高出价者
                 expect(await myNFTProxy.ownerOf(NFT_ID)).to.equal(user1);
 
-                // 验证 ETH 转移给卖家 (deployer)
+                // 验证 ETH 转移给卖家 (deployer) - 扣除手续费
                 const deployerFinalBalance = await ethers.provider.getBalance(deployer);
-                // 余额应该增加，接近初始余额 + BID_AMOUNT
-                expect(deployerFinalBalance).to.be.gt(deployerInitialBalance + BID_AMOUNT - ethers.parseEther("0.001")); // 考虑 gas 费
+                const calculatedFeeAmount = await nftAuctionProxy.calculateFee(BID_AMOUNT);
+                const sellerAmount = BID_AMOUNT - calculatedFeeAmount;
+                // 余额应该增加，接近初始余额 + sellerAmount
+                expect(deployerFinalBalance).to.be.gt(deployerInitialBalance + sellerAmount - ethers.parseEther("0.001")); // 考虑 gas 费
 
-                // 验证 NFTAuction 合约的 ETH 余额是否减少
+                // 验证 NFTAuction 合约的 ETH 余额是否减少（扣除手续费）
                 const nftAuctionFinalBalance = await ethers.provider.getBalance(await nftAuctionProxy.getAddress());
-                expect(nftAuctionFinalBalance).to.equal(nftAuctionInitialBalance - BID_AMOUNT);
+                const feeAmount = await nftAuctionProxy.calculateFee(BID_AMOUNT);
+                expect(nftAuctionFinalBalance).to.equal(nftAuctionInitialBalance - BID_AMOUNT + feeAmount);
 
                 // 验证拍卖状态
                 const finalAuction = await nftAuctionProxy.auctions(auctionId);
@@ -680,6 +683,175 @@ describe("NFT拍卖合约", async () => {
                 await expect(
                     nftAuctionProxy.connect(await ethers.getSigner(user1)).setUsdcTokenAddress(newUsdcAddress)
                 ).to.be.revertedWithCustomError(nftAuctionProxy, "OwnableUnauthorizedAccount");
+            });
+        });
+
+        describe("手续费功能测试", function () {
+            let auctionId: bigint;
+            const BID_AMOUNT = ethers.parseEther("1.0"); // 1 ETH 用于测试手续费计算
+
+            beforeEach(async () => {
+                // 确保 NFT 归属正确
+                await myNFTProxy.connect(await ethers.getSigner(deployer)).approve(await nftAuctionProxy.getAddress(), NFT_ID);
+                auctionId = await createAuctionHelper(
+                    await myNFTProxy.getAddress(),
+                    NFT_ID,
+                    STARTING_PRICE,
+                    false,
+                    DURATION
+                );
+
+                // User 1 places bid
+                await nftAuctionProxy.connect(await ethers.getSigner(user1)).placeBid(
+                    auctionId,
+                    0n,
+                    ethers.ZeroAddress,
+                    { value: BID_AMOUNT }
+                );
+            });
+
+            it("应正确计算手续费", async function () {
+                const feeRate = await nftAuctionProxy.feeRate();
+                const calculatedFee = await nftAuctionProxy.calculateFee(BID_AMOUNT);
+
+                // 验证手续费计算正确 (2.5% of 1 ETH = 0.025 ETH)
+                const expectedFee = (BID_AMOUNT * feeRate) / await nftAuctionProxy.FEE_RATE_BASE();
+                expect(calculatedFee).to.equal(expectedFee);
+                expect(calculatedFee).to.equal(ethers.parseEther("0.025")); // 2.5% of 1 ETH
+            });
+
+            it("结束拍卖时应收取手续费并累计", async function () {
+                // 推进时间到拍卖结束
+                const auction = await nftAuctionProxy.auctions(auctionId);
+                await time.increaseTo(auction.endTime + 1n);
+
+                const initialTotalFeesETH = await nftAuctionProxy.totalFeesETH();
+                const calculatedFee = await nftAuctionProxy.calculateFee(BID_AMOUNT);
+
+                // 结束拍卖
+                await expect(
+                    nftAuctionProxy.endAuction(auctionId)
+                ).to.emit(nftAuctionProxy, "FeeCollected").withArgs(
+                    auctionId,
+                    calculatedFee,
+                    ethers.ZeroAddress,
+                    deployer
+                );
+
+                // 验证手续费已累计
+                const finalTotalFeesETH = await nftAuctionProxy.totalFeesETH();
+                expect(finalTotalFeesETH).to.equal(initialTotalFeesETH + calculatedFee);
+            });
+
+            it("USDC 拍卖结束时应收取 USDC 手续费", async function () {
+                const STARTING_PRICE_USDC = 10000n; // 100 USDC
+                const BID_AMOUNT_USDC = 20000n; // 200 USDC
+
+                // 创建一个新的 NFT 用于 USDC 拍卖测试
+                const NEW_NFT_ID = 4n;
+                await myNFTProxy.MintNFT(deployer, NEW_NFT_ID, "url4");
+                await myNFTProxy.connect(await ethers.getSigner(deployer)).approve(await nftAuctionProxy.getAddress(), NEW_NFT_ID);
+
+                // 创建 USDC 定价的拍卖
+                const usdcAuctionId = await createAuctionHelper(
+                    await myNFTProxy.getAddress(),
+                    NEW_NFT_ID,
+                    STARTING_PRICE_USDC,
+                    true,
+                    DURATION
+                );
+
+                // 铸造 USDC 给 user1
+                await (mockUSDC as any).mint(user1, BID_AMOUNT_USDC);
+                await mockUSDC.connect(await ethers.getSigner(user1)).approve(await nftAuctionProxy.getAddress(), BID_AMOUNT_USDC);
+
+                // User 1 places USDC bid
+                await nftAuctionProxy.connect(await ethers.getSigner(user1)).placeBid(
+                    usdcAuctionId,
+                    BID_AMOUNT_USDC,
+                    await mockUSDC.getAddress(),
+                    { value: 0n }
+                );
+
+                // 推进时间到拍卖结束
+                const auction = await nftAuctionProxy.auctions(usdcAuctionId);
+                await time.increaseTo(auction.endTime + 1n);
+
+                const initialTotalFeesUSDC = await nftAuctionProxy.totalFeesUSDC();
+                const calculatedFee = await nftAuctionProxy.calculateFee(BID_AMOUNT_USDC);
+
+                // 结束拍卖
+                await nftAuctionProxy.endAuction(usdcAuctionId);
+
+                // 验证 USDC 手续费已累计
+                const finalTotalFeesUSDC = await nftAuctionProxy.totalFeesUSDC();
+                expect(finalTotalFeesUSDC).to.equal(initialTotalFeesUSDC + calculatedFee);
+            });
+
+            it("取消拍卖时不应收取手续费", async function () {
+                const initialTotalFeesETH = await nftAuctionProxy.totalFeesETH();
+
+                // 卖家取消拍卖
+                await nftAuctionProxy.cancelAuction(auctionId);
+
+                // 验证手续费未累计
+                const finalTotalFeesETH = await nftAuctionProxy.totalFeesETH();
+                expect(finalTotalFeesETH).to.equal(initialTotalFeesETH);
+            });
+
+            it("只有所有者可以设置手续费比例", async function () {
+                const newFeeRate = 300n; // 3%
+
+                // 所有者设置手续费比例
+                await expect(nftAuctionProxy.setFeeRate(newFeeRate))
+                    .to.emit(nftAuctionProxy, "FeeRateUpdated")
+                    .withArgs(await nftAuctionProxy.DEFAULT_FEE_RATE(), newFeeRate);
+
+                // 验证手续费比例已更新
+                expect(await nftAuctionProxy.feeRate()).to.equal(newFeeRate);
+
+                // 非所有者设置手续费比例应失败
+                await expect(
+                    nftAuctionProxy.connect(await ethers.getSigner(user1)).setFeeRate(newFeeRate)
+                ).to.be.revertedWithCustomError(nftAuctionProxy, "OwnableUnauthorizedAccount");
+            });
+
+            it("设置手续费比例不能超过10%", async function () {
+                const invalidFeeRate = 1500n; // 15% - 超过10%限制
+
+                await expect(
+                    nftAuctionProxy.setFeeRate(invalidFeeRate)
+                ).to.be.revertedWithCustomError(nftAuctionProxy, "InvalidFeeRate");
+            });
+
+            it("只有所有者可以提取手续费", async function () {
+                // 先完成一个拍卖以产生手续费
+                const auction = await nftAuctionProxy.auctions(auctionId);
+                await time.increaseTo(auction.endTime + 1n);
+                await nftAuctionProxy.endAuction(auctionId);
+
+                const totalFeesETH = await nftAuctionProxy.totalFeesETH();
+                expect(totalFeesETH).to.be.gt(0);
+
+                // 所有者提取手续费
+                await expect(nftAuctionProxy.withdrawFees())
+                    .to.emit(nftAuctionProxy, "FeesWithdrawn")
+                    .withArgs(deployer, totalFeesETH, 0n);
+
+                // 验证手续费已清零
+                expect(await nftAuctionProxy.totalFeesETH()).to.equal(0);
+                expect(await nftAuctionProxy.totalFeesUSDC()).to.equal(0);
+
+                // 非所有者提取手续费应失败
+                await expect(
+                    nftAuctionProxy.connect(await ethers.getSigner(user1)).withdrawFees()
+                ).to.be.revertedWithCustomError(nftAuctionProxy, "OwnableUnauthorizedAccount");
+            });
+
+            it("无手续费可提取时应回退", async function () {
+                await expect(
+                    nftAuctionProxy.withdrawFees()
+                ).to.be.revertedWithCustomError(nftAuctionProxy, "NoFeesToWithdraw");
             });
         });
 
